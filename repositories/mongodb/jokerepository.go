@@ -20,13 +20,13 @@ func NewJokeRepository(c *mongo.Collection) *JokeRepository {
 	}
 }
 
-func (jr *JokeRepository) FetchAll(ctx context.Context, limit uint64, offset string, direction repositories.FetchDirection) ([]*data.Joke, string, error) {
+func (jr *JokeRepository) FetchAll(ctx context.Context, limit uint64, offset string, direction repositories.FetchDirection) (data.Jokes, *string, error) {
 	var jokes data.Jokes
 
 	objectID, err := primitive.ObjectIDFromHex(offset)
 
-	if err != nil {
-		return jokes, "", repositories.ErrInvalidOffset
+	if err != nil && offset != "" {
+		return jokes, nil, repositories.ErrInvalidOffset
 	}
 
 	condition, options := paginate(objectID, "_id", limit, direction)
@@ -34,7 +34,7 @@ func (jr *JokeRepository) FetchAll(ctx context.Context, limit uint64, offset str
 	cursor, err := jr.c.Find(ctx, condition, options)
 
 	if err != nil {
-		return jokes, "", repositories.ErrInvalidOffset
+		return jokes, nil, repositories.ErrInvalidOffset
 	}
 
 	defer cursor.Close(ctx)
@@ -49,14 +49,20 @@ func (jr *JokeRepository) FetchAll(ctx context.Context, limit uint64, offset str
 		joke = new(data.Joke)
 
 		if err = cursor.Decode(joke); err != nil {
-			return jokes, "", err
+			return jokes, nil, err
 		}
 
 		jokes = append(jokes, joke)
 		i++
 	}
 
-	return jokes, joke.ID, nil
+	var nextID *string
+
+	if joke != nil {
+		nextID = &joke.ID
+	}
+
+	return jokes, nextID, nil
 }
 
 func (jr *JokeRepository) FetchOne(ctx context.Context, id string) (*data.Joke, error) {
@@ -79,4 +85,32 @@ func (jr *JokeRepository) FetchOne(ctx context.Context, id string) (*data.Joke, 
 	joke := new(data.Joke)
 
 	return joke, nil
+}
+
+func (jr *JokeRepository) Insert(ctx context.Context, joke *data.Joke) (string, error) {
+	result, err := jr.c.InsertOne(ctx, joke)
+
+	if err != nil {
+		return "", err
+	}
+
+	objectID := result.InsertedID.(primitive.ObjectID)
+
+	return objectID.Hex(), nil
+}
+
+func (jr *JokeRepository) Update(ctx context.Context, id string, joke *data.Joke) (string, error) {
+	objectID, err := primitive.ObjectIDFromHex(id)
+
+	if err != nil {
+		return "", err
+	}
+
+	_, err = jr.c.UpdateByID(ctx, objectID, joke)
+
+	if err != nil {
+		return "", err
+	}
+
+	return objectID.Hex(), nil
 }

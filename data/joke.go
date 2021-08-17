@@ -6,8 +6,8 @@ import (
 )
 
 type Joke struct {
-	ID          string  `json:"joke_id" bson:"_id"`
-	AuthorID    *string `json:"author_id,omitempty" bson:"author_id,omitempty" validate:"required"`
+	ID          string  `json:"joke_id" bson:"_id,omitempty"`
+	AuthorID    *string `json:"author_id,omitempty" bson:"author_id,omitempty"`
 	Text        string  `json:"text" validate:"required"`
 	Explanation string  `json:"explanation"`
 	Language    string  `json:"lang" validate:"required"`
