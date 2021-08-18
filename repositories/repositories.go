@@ -8,3 +8,4 @@ const FetchNext FetchDirection = 1
 const FetchBack FetchDirection = -1
 
 var ErrInvalidOffset error = errors.New("invalid offset ID")
+var ErrUnknownID error = errors.New("unknown ID")

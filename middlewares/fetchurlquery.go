@@ -16,32 +16,34 @@ type FetchQueryURLParams struct {
 	Direction repositories.FetchDirection
 }
 
-func FetchAllQueryURL(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-	offset := r.URL.Query().Get("offset")
-	limitString := r.URL.Query().Get("limit")
-	directionString := r.URL.Query().Get("direction")
+func FetchAllQueryURL(next http.HandlerFunc) http.HandlerFunc {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		offset := r.URL.Query().Get("offset")
+		limitString := r.URL.Query().Get("limit")
+		directionString := r.URL.Query().Get("direction")
 
-	var direction repositories.FetchDirection
+		var direction repositories.FetchDirection
 
-	limit, err := strconv.ParseUint(limitString, 10, 64)
+		limit, err := strconv.ParseUint(limitString, 10, 64)
 
-	if err != nil && offset != "" {
-		http.Error(w, "Invalid limit type", http.StatusBadRequest)
-		return
-	}
+		if err != nil && offset != "" {
+			http.Error(w, "Invalid limit type", http.StatusBadRequest)
+			return
+		}
 
-	switch directionString {
-	case "last":
-		direction = repositories.FetchBack
-	default:
-		direction = repositories.FetchNext
-	}
+		switch directionString {
+		case "last":
+			direction = repositories.FetchBack
+		default:
+			direction = repositories.FetchNext
+		}
 
-	ctx := context.WithValue(r.Context(), FetchQueryURLParamsKey{}, &FetchQueryURLParams{
-		Offset:    offset,
-		Limit:     limit,
-		Direction: direction,
+		ctx := context.WithValue(r.Context(), FetchQueryURLParamsKey{}, &FetchQueryURLParams{
+			Offset:    offset,
+			Limit:     limit,
+			Direction: direction,
+		})
+
+		next(w, r.WithContext(ctx))
 	})
-
-	next(w, r.WithContext(ctx))
 }

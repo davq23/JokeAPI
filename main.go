@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"syscall"
 	"time"
 
@@ -39,15 +40,20 @@ func main() {
 
 	v := validator.New()
 
-	vm := middlewares.NewValidation(l, v)
+	idRegexp := regexp.MustCompile(`[a-fA-F\d]{24}`)
+
+	vm := middlewares.NewValidation(l, v, idRegexp)
 
 	jr := mongodb.NewJokeRepository(jokesCollection)
+
+	v.RegisterValidation("joke_id", jr.CheckValidID)
 
 	jh := handlers.NewJoke(l, jr, vm)
 
 	serveMux := http.NewServeMux()
 
 	serveMux.Handle("/jokes", jh)
+	serveMux.Handle("/jokes/", jh)
 
 	server := &http.Server{
 		ReadTimeout:  5 * time.Second,

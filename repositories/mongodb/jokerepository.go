@@ -5,6 +5,7 @@ import (
 
 	"github.com/davq23/jokeapi/data"
 	"github.com/davq23/jokeapi/repositories"
+	"github.com/go-playground/validator/v10"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -20,6 +21,11 @@ func NewJokeRepository(c *mongo.Collection) *JokeRepository {
 	}
 }
 
+func (jr *JokeRepository) CheckValidID(fl validator.FieldLevel) bool {
+	id := fl.Field().String()
+	return primitive.IsValidObjectID(id)
+}
+
 func (jr *JokeRepository) FetchAll(ctx context.Context, limit uint64, offset string, direction repositories.FetchDirection) (data.Jokes, *string, error) {
 	var jokes data.Jokes
 
@@ -29,7 +35,7 @@ func (jr *JokeRepository) FetchAll(ctx context.Context, limit uint64, offset str
 		return jokes, nil, repositories.ErrInvalidOffset
 	}
 
-	condition, options := paginate(objectID, "_id", limit, direction)
+	condition, options := paginate(objectID, "_id", limit+1, direction)
 
 	cursor, err := jr.c.Find(ctx, condition, options)
 
@@ -39,13 +45,13 @@ func (jr *JokeRepository) FetchAll(ctx context.Context, limit uint64, offset str
 
 	defer cursor.Close(ctx)
 
-	i := uint64(limit)
+	i := uint64(0)
 
 	jokes = make(data.Jokes, 0, limit)
 
 	var joke *data.Joke
 
-	for cursor.Next(ctx) && i == limit {
+	for i != limit && cursor.Next(ctx) {
 		joke = new(data.Joke)
 
 		if err = cursor.Decode(joke); err != nil {
@@ -58,7 +64,7 @@ func (jr *JokeRepository) FetchAll(ctx context.Context, limit uint64, offset str
 
 	var nextID *string
 
-	if joke != nil {
+	if cursor.Next(ctx) && joke != nil {
 		nextID = &joke.ID
 	}
 
@@ -74,15 +80,19 @@ func (jr *JokeRepository) FetchOne(ctx context.Context, id string) (*data.Joke, 
 
 	result := jr.c.FindOne(ctx, bson.M{"_id": objectID})
 
-	if err != nil {
-		return nil, err
-	}
-
 	if result.Err() != nil {
+		if result.Err() == mongo.ErrNoDocuments {
+			return nil, repositories.ErrUnknownID
+		}
+
 		return nil, result.Err()
 	}
 
 	joke := new(data.Joke)
+
+	if err = result.Decode(joke); err != nil {
+		return nil, err
+	}
 
 	return joke, nil
 }
@@ -106,10 +116,34 @@ func (jr *JokeRepository) Update(ctx context.Context, id string, joke *data.Joke
 		return "", err
 	}
 
-	_, err = jr.c.UpdateByID(ctx, objectID, joke)
+	result, err := jr.c.ReplaceOne(ctx, bson.M{"_id": objectID}, joke)
 
 	if err != nil {
 		return "", err
+	}
+
+	if result.MatchedCount == 0 {
+		return objectID.Hex(), repositories.ErrUnknownID
+	}
+
+	return objectID.Hex(), nil
+}
+
+func (jr *JokeRepository) Delete(ctx context.Context, id string) (string, error) {
+	objectID, err := primitive.ObjectIDFromHex(id)
+
+	if err != nil {
+		return "", err
+	}
+
+	result, err := jr.c.DeleteOne(ctx, bson.M{"_id": objectID})
+
+	if err != nil {
+		return "", err
+	}
+
+	if result.DeletedCount == 0 {
+		return objectID.Hex(), repositories.ErrUnknownID
 	}
 
 	return objectID.Hex(), nil
