@@ -3,3 +3,6 @@ db_files/*
 
 
 .env
+*.env
+
+*.http

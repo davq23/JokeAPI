@@ -18,6 +18,8 @@ import (
 	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+
+	_ "github.com/go-sql-driver/mysql"
 )
 
 func main() {
@@ -25,7 +27,7 @@ func main() {
 
 	l := log.New(os.Stdout, "joke api - ", log.LstdFlags)
 	cfg := config.Config{
-		DBConnectionURI: os.Getenv("DB_URI"),
+		DBConnectionURI: os.Getenv("MONGODB_URI_REMOTE"),
 	}
 
 	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI(cfg.DBConnectionURI))
@@ -36,7 +38,14 @@ func main() {
 
 	db := client.Database("jokeapi")
 
-	jokesCollection := db.Collection("jokes")
+	jc := db.Collection("jokes")
+	uc := db.Collection("users")
+	jr := mongodb.NewJoke(jc)
+	ur := mongodb.NewUser(uc)
+
+	if err != nil {
+		l.Fatal(err.Error())
+	}
 
 	v := validator.New()
 
@@ -44,16 +53,19 @@ func main() {
 
 	vm := middlewares.NewValidation(l, v, idRegexp)
 
-	jr := mongodb.NewJokeRepository(jokesCollection)
-
 	v.RegisterValidation("joke_id", jr.CheckValidID)
 
-	jh := handlers.NewJoke(l, jr, vm)
+	auth := middlewares.NewAuth(l, []byte(os.Getenv("API_KEY")))
+
+	jh := handlers.NewJoke(l, jr, vm, auth)
+	uh := handlers.NewUser(l, ur, vm, auth)
 
 	serveMux := http.NewServeMux()
 
 	serveMux.Handle("/jokes", jh)
 	serveMux.Handle("/jokes/", jh)
+	serveMux.Handle("/users", uh)
+	serveMux.Handle("/users/", uh)
 
 	server := &http.Server{
 		ReadTimeout:  5 * time.Second,
@@ -84,6 +96,7 @@ func main() {
 	tc, cancelFunc := context.WithTimeout(context.Background(), 30*time.Second)
 
 	defer cancelFunc()
+
 	client.Disconnect(context.Background())
 
 	server.Shutdown(tc)

@@ -9,25 +9,26 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"golang.org/x/crypto/bcrypt"
 )
 
-type JokeRepository struct {
+type UserCRUD struct {
 	c *mongo.Collection
 }
 
-func NewJokeRepository(c *mongo.Collection) *JokeRepository {
-	return &JokeRepository{
+func NewUser(c *mongo.Collection) *UserCRUD {
+	return &UserCRUD{
 		c: c,
 	}
 }
 
-func (jr *JokeRepository) CheckValidID(fl validator.FieldLevel) bool {
+func (jr *UserCRUD) CheckValidID(fl validator.FieldLevel) bool {
 	id := fl.Field().String()
 	return primitive.IsValidObjectID(id)
 }
 
-func (jr *JokeRepository) FetchAll(ctx context.Context, limit uint64, offset string, direction repositories.FetchDirection) (data.Jokes, *string, error) {
-	var jokes data.Jokes
+func (jr *UserCRUD) FetchAll(ctx context.Context, limit uint64, offset string, direction repositories.FetchDirection) (data.Users, *string, error) {
+	var jokes data.Users
 
 	objectID, err := primitive.ObjectIDFromHex(offset)
 
@@ -47,12 +48,12 @@ func (jr *JokeRepository) FetchAll(ctx context.Context, limit uint64, offset str
 
 	i := uint64(0)
 
-	jokes = make(data.Jokes, 0, limit)
+	jokes = make(data.Users, 0, limit)
 
-	var joke *data.Joke
+	var joke *data.User
 
 	for i != limit && cursor.Next(ctx) {
-		joke = new(data.Joke)
+		joke = new(data.User)
 
 		if err = cursor.Decode(joke); err != nil {
 			return jokes, nil, err
@@ -71,7 +72,7 @@ func (jr *JokeRepository) FetchAll(ctx context.Context, limit uint64, offset str
 	return jokes, nextID, nil
 }
 
-func (jr *JokeRepository) FetchOne(ctx context.Context, id string) (*data.Joke, error) {
+func (jr *UserCRUD) FetchOne(ctx context.Context, id string) (*data.User, error) {
 	objectID, err := primitive.ObjectIDFromHex(id)
 
 	if err != nil {
@@ -88,17 +89,27 @@ func (jr *JokeRepository) FetchOne(ctx context.Context, id string) (*data.Joke, 
 		return nil, result.Err()
 	}
 
-	joke := new(data.Joke)
+	user := new(data.User)
 
-	if err = result.Decode(joke); err != nil {
+	if err = result.Decode(user); err != nil {
 		return nil, err
 	}
 
-	return joke, nil
+	return user, nil
 }
 
-func (jr *JokeRepository) Insert(ctx context.Context, joke *data.Joke) (string, error) {
-	result, err := jr.c.InsertOne(ctx, joke)
+func (jr *UserCRUD) Insert(ctx context.Context, user *data.User) (string, error) {
+	passwordBytes, err := bcrypt.GenerateFromPassword([]byte(*user.Password), 10)
+
+	if err != nil {
+		return "", err
+	}
+
+	password := string(passwordBytes)
+
+	user.Password = &password
+
+	result, err := jr.c.InsertOne(ctx, user)
 
 	if err != nil {
 		return "", err
@@ -109,14 +120,24 @@ func (jr *JokeRepository) Insert(ctx context.Context, joke *data.Joke) (string, 
 	return objectID.Hex(), nil
 }
 
-func (jr *JokeRepository) Update(ctx context.Context, id string, joke *data.Joke) (string, error) {
+func (jr *UserCRUD) Update(ctx context.Context, id string, user *data.User) (string, error) {
 	objectID, err := primitive.ObjectIDFromHex(id)
 
 	if err != nil {
 		return "", err
 	}
 
-	result, err := jr.c.ReplaceOne(ctx, bson.M{"_id": objectID}, joke)
+	passwordBytes, err := bcrypt.GenerateFromPassword([]byte(*user.Password), 10)
+
+	if err != nil {
+		return "", err
+	}
+
+	password := string(passwordBytes)
+
+	user.Password = &password
+
+	result, err := jr.c.ReplaceOne(ctx, bson.M{"_id": objectID}, user)
 
 	if err != nil {
 		return "", err
@@ -129,7 +150,7 @@ func (jr *JokeRepository) Update(ctx context.Context, id string, joke *data.Joke
 	return objectID.Hex(), nil
 }
 
-func (jr *JokeRepository) Delete(ctx context.Context, id string) (string, error) {
+func (jr *UserCRUD) Delete(ctx context.Context, id string) (string, error) {
 	objectID, err := primitive.ObjectIDFromHex(id)
 
 	if err != nil {

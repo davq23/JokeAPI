@@ -7,7 +7,7 @@ import (
 	"github.com/go-playground/validator/v10"
 )
 
-type JokeRepository interface {
+type JokeCRUD interface {
 	FetchAll(ctx context.Context, limit uint64, offset string, direction FetchDirection) (data.Jokes, *string, error)
 	FetchOne(ctx context.Context, id string) (*data.Joke, error)
 	Insert(ctx context.Context, joke *data.Joke) (string, error)

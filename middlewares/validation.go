@@ -16,14 +16,15 @@ type Validation struct {
 	idRegexp *regexp.Regexp
 }
 
-type JokeIDParamKey struct{}
+type IDParamKey struct{}
 type JokeParamKey struct{}
+type UserParamKey struct{}
 
 func NewValidation(l *log.Logger, v *validator.Validate, idRegexp *regexp.Regexp) *Validation {
 	return &Validation{l, v, idRegexp}
 }
 
-func (vln *Validation) JokeIDURLValidation(next http.HandlerFunc) http.HandlerFunc {
+func (vln *Validation) IDURLValidation(next http.HandlerFunc, fieldName string) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
@@ -34,13 +35,39 @@ func (vln *Validation) JokeIDURLValidation(next http.HandlerFunc) http.HandlerFu
 			return
 		}
 
-		if err := vln.v.VarCtx(r.Context(), ids[0], "joke_id"); err != nil {
+		if err := vln.v.VarCtx(r.Context(), ids[0], fieldName); err != nil {
 			vln.l.Println(err.Error())
 			http.Error(w, "Invalid ID", http.StatusBadRequest)
 			return
 		}
 
-		next(w, r.WithContext(context.WithValue(r.Context(), JokeIDParamKey{}, ids[0])))
+		next(w, r.WithContext(context.WithValue(r.Context(), IDParamKey{}, ids[0])))
+	})
+}
+
+func (vln *Validation) UserValidation(next http.HandlerFunc) http.HandlerFunc {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := new(data.User)
+
+		err := user.FromJSON(r.Body)
+
+		if err != nil {
+			vln.l.Println(err.Error())
+			http.Error(w, "Invalid payload", http.StatusUnprocessableEntity)
+			return
+		}
+
+		err = vln.v.StructCtx(r.Context(), user)
+
+		if err != nil {
+			vln.l.Println(err.Error())
+			http.Error(w, "Invalid payload", http.StatusUnprocessableEntity)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), UserParamKey{}, user)
+
+		next(w, r.WithContext(ctx))
 	})
 }
 

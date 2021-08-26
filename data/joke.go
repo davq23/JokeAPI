@@ -6,11 +6,11 @@ import (
 )
 
 type Joke struct {
-	ID          string  `json:"joke_id" bson:"_id,omitempty"`
-	AuthorID    *string `json:"author_id,omitempty" bson:"author_id,omitempty"`
-	Text        string  `json:"text" validate:"required"`
-	Explanation string  `json:"explanation"`
-	Language    string  `json:"lang" validate:"required"`
+	ID          string  `json:"joke_id" db:"id,omitempty" bson:"_id,omitempty"`
+	AuthorID    *string `json:"author_id,omitempty" db:"author_id" bson:"author_id,omitempty"`
+	Text        string  `json:"text" db:"text" validate:"required"`
+	Explanation string  `json:"explanation,omitempty" db:"explanation,omitempty" bson:"explanation,omitempty"`
+	Language    string  `json:"lang" db:"language" bson:"language" validate:"required"`
 }
 
 func (j *Joke) FromJSON(r io.Reader) error {

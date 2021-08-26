@@ -9,54 +9,49 @@ import (
 	"github.com/davq23/jokeapi/repositories"
 )
 
-type Joke struct {
+type User struct {
 	l    *log.Logger
-	repo repositories.JokeCRUD
+	repo repositories.UserCRUD
 	vm   *middlewares.Validation
 	am   *middlewares.Auth
 }
 
-func NewJoke(l *log.Logger, repo repositories.JokeCRUD, v *middlewares.Validation, auth *middlewares.Auth) *Joke {
-	return &Joke{l, repo, v, auth}
+func NewUser(l *log.Logger, repo repositories.UserCRUD, vm *middlewares.Validation, am *middlewares.Auth) *User {
+	return &User{l, repo, vm, am}
 }
 
-func (j *Joke) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Add("Content-Type", "application/json")
-
+func (u User) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		if r.URL.Path == "/jokes" || r.URL.Path == "/jokes/" {
-			middlewares.FetchAllQueryURL(j.fetchAll)(w, r)
+		if r.URL.Path == "/users" || r.URL.Path == "/users/" {
+			u.am.Auth(middlewares.FetchAllQueryURL(u.fetchAll), true)(w, r)
 		} else {
-			j.vm.IDURLValidation(j.fetchOne, "joke_id")(w, r)
+			u.vm.IDURLValidation(u.fetchOne, "user_id")(w, r)
 		}
-
 	case http.MethodPost:
-		j.vm.JokeValidation(j.insert)(w, r)
-
+		u.vm.UserValidation(u.insert)(w, r)
 	case http.MethodPut:
-		j.am.Auth(j.vm.IDURLValidation(j.vm.JokeValidation(j.update), "joke_id"), true)(w, r)
-
+		u.vm.IDURLValidation(u.vm.UserValidation(u.update), "user_id")(w, r)
 	case http.MethodDelete:
-		j.vm.IDURLValidation(j.delete, "joke_id")(w, r)
+		u.vm.IDURLValidation(u.delete, "user_id")(w, r)
 	default:
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func (j *Joke) delete(w http.ResponseWriter, r *http.Request) {
-	jokeID, ok := r.Context().Value(middlewares.IDParamKey{}).(string)
+func (j *User) delete(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middlewares.IDParamKey{}).(string)
 
 	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	objectID, err := j.repo.Delete(r.Context(), jokeID)
+	objectID, err := j.repo.Delete(r.Context(), userID)
 
 	if err != nil {
 		if err == repositories.ErrUnknownID {
-			http.Error(w, "Unknown Joke ID", http.StatusNotFound)
+			http.Error(w, "Unknown User ID", http.StatusNotFound)
 			return
 		}
 
@@ -76,7 +71,7 @@ func (j *Joke) delete(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (j *Joke) fetchAll(w http.ResponseWriter, r *http.Request) {
+func (j *User) fetchAll(w http.ResponseWriter, r *http.Request) {
 	params, ok := r.Context().Value(middlewares.FetchQueryURLParamsKey{}).(*middlewares.FetchQueryURLParams)
 
 	if !ok {
@@ -84,7 +79,7 @@ func (j *Joke) fetchAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jokes, cursorNext, err := j.repo.FetchAll(r.Context(), params.Limit, params.Offset, params.Direction)
+	users, cursorNext, err := j.repo.FetchAll(r.Context(), params.Limit, params.Offset, params.Direction)
 
 	if err != nil {
 		if err == repositories.ErrInvalidOffset {
@@ -98,9 +93,9 @@ func (j *Joke) fetchAll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var qar data.QueryAllResponse
-	qar.ResultCount = uint64(len(jokes))
+	qar.ResultCount = uint64(len(users))
 	qar.CursorNext = cursorNext
-	qar.Results = jokes
+	qar.Results = users
 
 	err = qar.ToJSON(w)
 
@@ -109,19 +104,19 @@ func (j *Joke) fetchAll(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (j *Joke) fetchOne(w http.ResponseWriter, r *http.Request) {
-	jokeID, ok := r.Context().Value(middlewares.IDParamKey{}).(string)
+func (j *User) fetchOne(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middlewares.IDParamKey{}).(string)
 
 	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	joke, err := j.repo.FetchOne(r.Context(), jokeID)
+	user, err := j.repo.FetchOne(r.Context(), userID)
 
 	if err != nil {
 		if err == repositories.ErrUnknownID {
-			http.Error(w, "Unknown Joke ID", http.StatusNotFound)
+			http.Error(w, "Unknown User ID", http.StatusNotFound)
 			return
 		}
 
@@ -130,24 +125,24 @@ func (j *Joke) fetchOne(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = joke.ToJSON(w)
+	err = user.ToJSON(w)
 
 	if err != nil {
 		http.Error(w, "Unexpected error", http.StatusInternalServerError)
 	}
 }
 
-func (j *Joke) insert(w http.ResponseWriter, r *http.Request) {
-	joke, ok := r.Context().Value(middlewares.JokeParamKey{}).(*data.Joke)
+func (j *User) insert(w http.ResponseWriter, r *http.Request) {
+	user, ok := r.Context().Value(middlewares.UserParamKey{}).(*data.User)
 
-	joke.ID = ""
+	user.ID = ""
 
 	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	objectID, err := j.repo.Insert(r.Context(), joke)
+	objectID, err := j.repo.Insert(r.Context(), user)
 
 	if err != nil {
 		j.l.Println(err.Error())
@@ -155,29 +150,29 @@ func (j *Joke) insert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	joke.ID = objectID
+	user.ID = objectID
 
-	err = joke.ToJSON(w)
+	err = user.ToJSON(w)
 
 	if err != nil {
 		http.Error(w, "Unexpected error", http.StatusInternalServerError)
 	}
 }
 
-func (j *Joke) update(w http.ResponseWriter, r *http.Request) {
-	joke, ok := r.Context().Value(middlewares.JokeParamKey{}).(*data.Joke)
-	jokeID, okID := r.Context().Value(middlewares.IDParamKey{}).(string)
+func (j *User) update(w http.ResponseWriter, r *http.Request) {
+	user, ok := r.Context().Value(middlewares.UserParamKey{}).(*data.User)
+	userID, okID := r.Context().Value(middlewares.IDParamKey{}).(string)
 
 	if !ok || !okID {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	objectID, err := j.repo.Update(r.Context(), jokeID, joke)
+	objectID, err := j.repo.Update(r.Context(), userID, user)
 
 	if err != nil {
 		if err == repositories.ErrUnknownID {
-			http.Error(w, "Unknown Joke ID", http.StatusNotFound)
+			http.Error(w, "Unknown User ID", http.StatusNotFound)
 			return
 		}
 
@@ -186,9 +181,9 @@ func (j *Joke) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	joke.ID = objectID
+	user.ID = objectID
 
-	err = joke.ToJSON(w)
+	err = user.ToJSON(w)
 
 	if err != nil {
 		http.Error(w, "Unexpected error", http.StatusInternalServerError)
