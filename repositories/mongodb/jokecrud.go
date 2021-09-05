@@ -29,13 +29,7 @@ func (jr *JokeCRUD) CheckValidID(fl validator.FieldLevel) bool {
 func (jr *JokeCRUD) FetchAll(ctx context.Context, limit uint64, offset string, direction repositories.FetchDirection) (data.Jokes, *string, error) {
 	var jokes data.Jokes
 
-	objectID, err := primitive.ObjectIDFromHex(offset)
-
-	if err != nil && offset != "" {
-		return jokes, nil, repositories.ErrInvalidOffset
-	}
-
-	condition, options := paginate(objectID, "_id", limit+1, direction)
+	condition, options := paginate(offset, "id", limit+1, direction)
 
 	cursor, err := jr.c.Find(ctx, condition, options)
 
@@ -65,6 +59,12 @@ func (jr *JokeCRUD) FetchAll(ctx context.Context, limit uint64, offset string, d
 	var nextID *string
 
 	if cursor.Next(ctx) && joke != nil {
+		joke := new(data.Joke)
+
+		if err = cursor.Decode(joke); err != nil {
+			return jokes, nil, err
+		}
+
 		nextID = &joke.ID
 	}
 
@@ -72,13 +72,7 @@ func (jr *JokeCRUD) FetchAll(ctx context.Context, limit uint64, offset string, d
 }
 
 func (jr *JokeCRUD) FetchOne(ctx context.Context, id string) (*data.Joke, error) {
-	objectID, err := primitive.ObjectIDFromHex(id)
-
-	if err != nil {
-		return nil, repositories.ErrInvalidOffset
-	}
-
-	result := jr.c.FindOne(ctx, bson.M{"_id": objectID})
+	result := jr.c.FindOne(ctx, bson.M{"id": id})
 
 	if result.Err() != nil {
 		if result.Err() == mongo.ErrNoDocuments {
@@ -90,7 +84,7 @@ func (jr *JokeCRUD) FetchOne(ctx context.Context, id string) (*data.Joke, error)
 
 	joke := new(data.Joke)
 
-	if err = result.Decode(joke); err != nil {
+	if err := result.Decode(joke); err != nil {
 		return nil, err
 	}
 
@@ -109,42 +103,75 @@ func (jr *JokeCRUD) Insert(ctx context.Context, joke *data.Joke) (string, error)
 	return objectID.Hex(), nil
 }
 
-func (jr *JokeCRUD) Update(ctx context.Context, id string, joke *data.Joke) (string, error) {
-	objectID, err := primitive.ObjectIDFromHex(id)
+func (jr *JokeCRUD) DeleteRating(ctx context.Context, jokeID string, ratingID string, authID string) (string, error) {
+	return "", nil
+}
+
+func (jr *JokeCRUD) RateJoke(ctx context.Context, jokeID string, jokeRating *data.JokeRating) (string, error) {
+	session, err := jr.c.Database().Client().StartSession()
 
 	if err != nil {
 		return "", err
 	}
 
-	result, err := jr.c.ReplaceOne(ctx, bson.M{"_id": objectID}, joke)
+	defer session.EndSession(ctx)
+
+	if err = session.StartTransaction(); err != nil {
+		return "", err
+	}
+
+	result := jr.c.FindOne(ctx, bson.M{"id": jokeID})
+
+	err = result.Err()
+
+	if err != nil {
+		session.AbortTransaction(ctx)
+
+		if err == mongo.ErrNoDocuments {
+			return "", repositories.ErrUnknownID
+		}
+
+		return "", err
+	}
+
+	_, err = jr.c.UpdateOne(ctx, bson.M{"id": jokeID}, bson.M{"$push": bson.M{
+		"ratings": jokeRating,
+	}})
+
+	if err != nil {
+		session.AbortTransaction(ctx)
+		return "", err
+	}
+
+	session.CommitTransaction(ctx)
+
+	return jokeRating.ID, nil
+}
+
+func (jr *JokeCRUD) Update(ctx context.Context, id string, joke *data.Joke) (string, error) {
+	result, err := jr.c.ReplaceOne(ctx, bson.M{"id": id}, joke)
 
 	if err != nil {
 		return "", err
 	}
 
 	if result.MatchedCount == 0 {
-		return objectID.Hex(), repositories.ErrUnknownID
+		return id, repositories.ErrUnknownID
 	}
 
-	return objectID.Hex(), nil
+	return id, nil
 }
 
 func (jr *JokeCRUD) Delete(ctx context.Context, id string) (string, error) {
-	objectID, err := primitive.ObjectIDFromHex(id)
-
-	if err != nil {
-		return "", err
-	}
-
-	result, err := jr.c.DeleteOne(ctx, bson.M{"_id": objectID})
+	result, err := jr.c.DeleteOne(ctx, bson.M{"id": id})
 
 	if err != nil {
 		return "", err
 	}
 
 	if result.DeletedCount == 0 {
-		return objectID.Hex(), repositories.ErrUnknownID
+		return id, repositories.ErrUnknownID
 	}
 
-	return objectID.Hex(), nil
+	return id, nil
 }

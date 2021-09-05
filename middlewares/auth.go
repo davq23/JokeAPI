@@ -12,13 +12,13 @@ import (
 
 type Auth struct {
 	l      *log.Logger
-	secret []byte
+	Secret []byte
 }
 
 func NewAuth(l *log.Logger, secret []byte) *Auth {
 	return &Auth{
 		l:      l,
-		secret: secret,
+		Secret: secret,
 	}
 }
 
@@ -26,7 +26,6 @@ type AuthParamsKey struct{}
 
 type AuthParams struct {
 	ID    string
-	Email string
 	Admin bool
 }
 
@@ -36,8 +35,8 @@ func (au *Auth) Auth(next http.HandlerFunc, admin bool) http.HandlerFunc {
 
 		authParts := strings.Split(authorization, " ")
 
-		if len(authParts) != 2 || authParts[0] == "Bearer" {
-			http.Error(w, "Unauthorized access", http.StatusUnauthorized)
+		if len(authParts) != 2 || authParts[0] != "Bearer" {
+			http.Error(w, "Invalid authorization", http.StatusUnauthorized)
 			return
 		}
 
@@ -46,7 +45,7 @@ func (au *Auth) Auth(next http.HandlerFunc, admin bool) http.HandlerFunc {
 				return nil, errors.New("invalid token")
 			}
 
-			return au.secret, nil
+			return au.Secret, nil
 		})
 
 		if err != nil {
@@ -63,16 +62,22 @@ func (au *Auth) Auth(next http.HandlerFunc, admin bool) http.HandlerFunc {
 			return
 		}
 
-		data := claims["data"].(map[string]interface{})
+		adminClaims, okAdmin := claims["admin"].(bool)
+		uid, okUid := claims["user_id"].(string)
 
-		if admin && !data["admin"].(bool) {
+		if !okUid || !okAdmin {
+			http.Error(w, "Invalid token", http.StatusUnauthorized)
+			return
+		}
+
+		if admin && !adminClaims {
 			http.Error(w, "Unauthorized access", http.StatusUnauthorized)
 			return
 		}
 
 		ctx := context.WithValue(r.Context(), AuthParamsKey{}, AuthParams{
-			ID:    data["email"].(string),
-			Email: data["id"].(string),
+			ID:    uid,
+			Admin: adminClaims,
 		})
 
 		next(w, r.WithContext(ctx))

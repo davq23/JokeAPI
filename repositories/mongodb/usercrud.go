@@ -9,7 +9,6 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
-	"golang.org/x/crypto/bcrypt"
 )
 
 type UserCRUD struct {
@@ -30,13 +29,7 @@ func (jr *UserCRUD) CheckValidID(fl validator.FieldLevel) bool {
 func (jr *UserCRUD) FetchAll(ctx context.Context, limit uint64, offset string, direction repositories.FetchDirection) (data.Users, *string, error) {
 	var jokes data.Users
 
-	objectID, err := primitive.ObjectIDFromHex(offset)
-
-	if err != nil && offset != "" {
-		return jokes, nil, repositories.ErrInvalidOffset
-	}
-
-	condition, options := paginate(objectID, "_id", limit+1, direction)
+	condition, options := paginate(offset, "id", limit+1, direction)
 
 	cursor, err := jr.c.Find(ctx, condition, options)
 
@@ -73,25 +66,39 @@ func (jr *UserCRUD) FetchAll(ctx context.Context, limit uint64, offset string, d
 }
 
 func (jr *UserCRUD) FetchOne(ctx context.Context, id string) (*data.User, error) {
-	objectID, err := primitive.ObjectIDFromHex(id)
+	result := jr.c.FindOne(ctx, bson.M{"id": id})
 
-	if err != nil {
-		return nil, repositories.ErrInvalidOffset
-	}
-
-	result := jr.c.FindOne(ctx, bson.M{"_id": objectID})
-
-	if result.Err() != nil {
-		if result.Err() == mongo.ErrNoDocuments {
+	if err := result.Err(); err != nil {
+		if err == mongo.ErrNoDocuments {
 			return nil, repositories.ErrUnknownID
 		}
 
-		return nil, result.Err()
+		return nil, err
 	}
 
 	user := new(data.User)
 
-	if err = result.Decode(user); err != nil {
+	if err := result.Decode(user); err != nil {
+		return nil, err
+	}
+
+	return user, nil
+}
+
+func (jr *UserCRUD) FetchOneByEmail(ctx context.Context, email string) (*data.User, error) {
+	result := jr.c.FindOne(ctx, bson.M{"email": email})
+
+	if err := result.Err(); err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, repositories.ErrUnknownEmail
+		}
+
+		return nil, err
+	}
+
+	user := new(data.User)
+
+	if err := result.Decode(user); err != nil {
 		return nil, err
 	}
 
@@ -99,16 +106,6 @@ func (jr *UserCRUD) FetchOne(ctx context.Context, id string) (*data.User, error)
 }
 
 func (jr *UserCRUD) Insert(ctx context.Context, user *data.User) (string, error) {
-	passwordBytes, err := bcrypt.GenerateFromPassword([]byte(*user.Password), 10)
-
-	if err != nil {
-		return "", err
-	}
-
-	password := string(passwordBytes)
-
-	user.Password = &password
-
 	result, err := jr.c.InsertOne(ctx, user)
 
 	if err != nil {
@@ -121,51 +118,29 @@ func (jr *UserCRUD) Insert(ctx context.Context, user *data.User) (string, error)
 }
 
 func (jr *UserCRUD) Update(ctx context.Context, id string, user *data.User) (string, error) {
-	objectID, err := primitive.ObjectIDFromHex(id)
-
-	if err != nil {
-		return "", err
-	}
-
-	passwordBytes, err := bcrypt.GenerateFromPassword([]byte(*user.Password), 10)
-
-	if err != nil {
-		return "", err
-	}
-
-	password := string(passwordBytes)
-
-	user.Password = &password
-
-	result, err := jr.c.ReplaceOne(ctx, bson.M{"_id": objectID}, user)
+	result, err := jr.c.ReplaceOne(ctx, bson.M{"id": id}, user)
 
 	if err != nil {
 		return "", err
 	}
 
 	if result.MatchedCount == 0 {
-		return objectID.Hex(), repositories.ErrUnknownID
+		return id, repositories.ErrUnknownID
 	}
 
-	return objectID.Hex(), nil
+	return id, nil
 }
 
 func (jr *UserCRUD) Delete(ctx context.Context, id string) (string, error) {
-	objectID, err := primitive.ObjectIDFromHex(id)
-
-	if err != nil {
-		return "", err
-	}
-
-	result, err := jr.c.DeleteOne(ctx, bson.M{"_id": objectID})
+	result, err := jr.c.DeleteOne(ctx, bson.M{"id": id})
 
 	if err != nil {
 		return "", err
 	}
 
 	if result.DeletedCount == 0 {
-		return objectID.Hex(), repositories.ErrUnknownID
+		return id, repositories.ErrUnknownID
 	}
 
-	return objectID.Hex(), nil
+	return id, nil
 }

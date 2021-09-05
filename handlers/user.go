@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"log"
 	"net/http"
 
@@ -10,44 +11,75 @@ import (
 )
 
 type User struct {
-	l    *log.Logger
-	repo repositories.UserCRUD
-	vm   *middlewares.Validation
-	am   *middlewares.Auth
+	l          *log.Logger
+	repo       repositories.UserCRUD
+	vm         *middlewares.Validation
+	am         *middlewares.Auth
+	getUser    http.HandlerFunc
+	getUsers   http.HandlerFunc
+	insertUser http.HandlerFunc
+	updateUser http.HandlerFunc
+	deleteUser http.HandlerFunc
 }
 
 func NewUser(l *log.Logger, repo repositories.UserCRUD, vm *middlewares.Validation, am *middlewares.Auth) *User {
-	return &User{l, repo, vm, am}
+	u := &User{l: l, repo: repo, vm: vm, am: am}
+
+	u.getUser = u.am.Auth(u.vm.IDOrEmailUserValidation(u.fetchOne), false)
+
+	u.getUsers = u.am.Auth(middlewares.FetchAllQueryURL(u.fetchAll), true)
+
+	u.insertUser = u.am.Auth(
+		u.vm.DataValidation(
+			middlewares.BCryptPassword(u.insert, u.l),
+			middlewares.UserParamKey{}),
+		true)
+
+	u.updateUser = u.am.Auth(u.vm.OneIDURLValidation(u.vm.DataValidation(
+		middlewares.BCryptPassword(u.update, u.l),
+		middlewares.UserParamKey{}), middlewares.UserParamKey{}), false)
+
+	u.deleteUser = u.am.Auth(u.vm.OneIDURLValidation(u.delete, middlewares.UserParamKey{}), true)
+
+	return u
 }
 
 func (u User) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
 	switch r.Method {
 	case http.MethodGet:
 		if r.URL.Path == "/users" || r.URL.Path == "/users/" {
-			u.am.Auth(middlewares.FetchAllQueryURL(u.fetchAll), true)(w, r)
+			u.getUsers(w, r)
 		} else {
-			u.vm.IDURLValidation(u.fetchOne, "user_id")(w, r)
+			uCtx := context.WithValue(r.Context(), middlewares.UserParamKey{}, &data.User{})
+			u.getUser(w, r.WithContext(uCtx))
 		}
 	case http.MethodPost:
-		u.vm.UserValidation(u.insert)(w, r)
+		uCtx := context.WithValue(r.Context(), middlewares.UserParamKey{}, &data.User{})
+		u.insertUser(w, r.WithContext(uCtx))
+
 	case http.MethodPut:
-		u.vm.IDURLValidation(u.vm.UserValidation(u.update), "user_id")(w, r)
+		uCtx := context.WithValue(r.Context(), middlewares.UserParamKey{}, &data.User{})
+		u.updateUser(w, r.WithContext(uCtx))
+
 	case http.MethodDelete:
-		u.vm.IDURLValidation(u.delete, "user_id")(w, r)
+		uCtx := context.WithValue(r.Context(), middlewares.UserParamKey{}, &data.User{})
+		u.deleteUser(w, r.WithContext(uCtx))
 	default:
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func (j *User) delete(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value(middlewares.IDParamKey{}).(string)
+func (u *User) delete(w http.ResponseWriter, r *http.Request) {
+	user, ok := r.Context().Value(middlewares.UserParamKey{}).(*data.User)
 
 	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	objectID, err := j.repo.Delete(r.Context(), userID)
+	objectID, err := u.repo.Delete(r.Context(), user.ID)
 
 	if err != nil {
 		if err == repositories.ErrUnknownID {
@@ -55,7 +87,7 @@ func (j *User) delete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		j.l.Println(err.Error())
+		u.l.Println(err.Error())
 		http.Error(w, "Unexpected error", http.StatusInternalServerError)
 		return
 	}
@@ -71,7 +103,7 @@ func (j *User) delete(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (j *User) fetchAll(w http.ResponseWriter, r *http.Request) {
+func (u *User) fetchAll(w http.ResponseWriter, r *http.Request) {
 	params, ok := r.Context().Value(middlewares.FetchQueryURLParamsKey{}).(*middlewares.FetchQueryURLParams)
 
 	if !ok {
@@ -79,14 +111,14 @@ func (j *User) fetchAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	users, cursorNext, err := j.repo.FetchAll(r.Context(), params.Limit, params.Offset, params.Direction)
+	users, cursorNext, err := u.repo.FetchAll(r.Context(), params.Limit, params.Offset, params.Direction)
 
 	if err != nil {
 		if err == repositories.ErrInvalidOffset {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		} else {
-			j.l.Println(err.Error())
+			u.l.Println(err.Error())
 			http.Error(w, "Unexpected error", http.StatusInternalServerError)
 			return
 		}
@@ -95,6 +127,8 @@ func (j *User) fetchAll(w http.ResponseWriter, r *http.Request) {
 	var qar data.QueryAllResponse
 	qar.ResultCount = uint64(len(users))
 	qar.CursorNext = cursorNext
+	qar.Offset = params.Offset
+	qar.Limit = params.Limit
 	qar.Results = users
 
 	err = qar.ToJSON(w)
@@ -104,15 +138,22 @@ func (j *User) fetchAll(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (j *User) fetchOne(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value(middlewares.IDParamKey{}).(string)
+func (u *User) fetchOne(w http.ResponseWriter, r *http.Request) {
+	user, ok := r.Context().Value(middlewares.UserParamKey{}).(*data.User)
+	auth, ok2 := r.Context().Value(middlewares.AuthParamsKey{}).(middlewares.AuthParams)
 
-	if !ok {
+	if !ok || !ok2 {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	user, err := j.repo.FetchOne(r.Context(), userID)
+	var err error
+
+	if user.ID != "" {
+		user, err = u.repo.FetchOne(r.Context(), user.ID)
+	} else {
+		user, err = u.repo.FetchOneByEmail(r.Context(), user.Email)
+	}
 
 	if err != nil {
 		if err == repositories.ErrUnknownID {
@@ -120,7 +161,43 @@ func (j *User) fetchOne(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		j.l.Println(err.Error())
+		u.l.Println(err.Error())
+		http.Error(w, "Unexpected error", http.StatusInternalServerError)
+		return
+	}
+
+	if !auth.Admin && user.ID != auth.ID {
+		http.Error(w, "Unknown User ID", http.StatusNotFound)
+		return
+	}
+
+	err = user.ToJSON(w)
+
+	if err != nil {
+		http.Error(w, "Unexpected error", http.StatusInternalServerError)
+	}
+}
+
+func (u *User) insert(w http.ResponseWriter, r *http.Request) {
+	user, ok := r.Context().Value(middlewares.UserParamKey{}).(*data.User)
+
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	err := user.GenerateID()
+
+	if err != nil {
+		u.l.Println(err.Error())
+		http.Error(w, "Unexpected error", http.StatusInternalServerError)
+		return
+	}
+
+	_, err = u.repo.Insert(r.Context(), user)
+
+	if err != nil {
+		u.l.Println(err.Error())
 		http.Error(w, "Unexpected error", http.StatusInternalServerError)
 		return
 	}
@@ -132,43 +209,15 @@ func (j *User) fetchOne(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (j *User) insert(w http.ResponseWriter, r *http.Request) {
+func (u *User) update(w http.ResponseWriter, r *http.Request) {
 	user, ok := r.Context().Value(middlewares.UserParamKey{}).(*data.User)
-
-	user.ID = ""
 
 	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	objectID, err := j.repo.Insert(r.Context(), user)
-
-	if err != nil {
-		j.l.Println(err.Error())
-		http.Error(w, "Unexpected error", http.StatusInternalServerError)
-		return
-	}
-
-	user.ID = objectID
-
-	err = user.ToJSON(w)
-
-	if err != nil {
-		http.Error(w, "Unexpected error", http.StatusInternalServerError)
-	}
-}
-
-func (j *User) update(w http.ResponseWriter, r *http.Request) {
-	user, ok := r.Context().Value(middlewares.UserParamKey{}).(*data.User)
-	userID, okID := r.Context().Value(middlewares.IDParamKey{}).(string)
-
-	if !ok || !okID {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
-	objectID, err := j.repo.Update(r.Context(), userID, user)
+	_, err := u.repo.Update(r.Context(), user.ID, user)
 
 	if err != nil {
 		if err == repositories.ErrUnknownID {
@@ -176,12 +225,10 @@ func (j *User) update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		j.l.Println(err.Error())
+		u.l.Println(err.Error())
 		http.Error(w, "Unexpected error", http.StatusInternalServerError)
 		return
 	}
-
-	user.ID = objectID
 
 	err = user.ToJSON(w)
 

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"log"
 	"net/http"
 
@@ -10,49 +11,70 @@ import (
 )
 
 type Joke struct {
-	l    *log.Logger
-	repo repositories.JokeCRUD
-	vm   *middlewares.Validation
-	am   *middlewares.Auth
+	l          *log.Logger
+	repo       repositories.JokeCRUD
+	vm         *middlewares.Validation
+	am         *middlewares.Auth
+	getJoke    http.HandlerFunc
+	getJokes   http.HandlerFunc
+	insertJoke http.HandlerFunc
+	updateJoke http.HandlerFunc
+	deleteJoke http.HandlerFunc
 }
 
 func NewJoke(l *log.Logger, repo repositories.JokeCRUD, v *middlewares.Validation, auth *middlewares.Auth) *Joke {
-	return &Joke{l, repo, v, auth}
+	j := &Joke{l: l, repo: repo, vm: v, am: auth}
+
+	j.getJoke = j.vm.OneIDURLValidation(j.fetchOne, middlewares.JokeParamKey{})
+	j.getJokes = middlewares.FetchAllQueryURL(j.fetchAll)
+
+	j.insertJoke = j.am.Auth(j.vm.DataValidation(j.insert, middlewares.JokeParamKey{}), false)
+	j.updateJoke = j.am.Auth(
+		j.vm.OneIDURLValidation(
+			j.vm.DataValidation(j.update, middlewares.JokeParamKey{}), middlewares.JokeParamKey{}),
+		true)
+	j.deleteJoke = j.am.Auth(j.vm.OneIDURLValidation(j.delete, middlewares.JokeParamKey{}), false)
+
+	return j
 }
 
 func (j *Joke) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Add("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json")
 
 	switch r.Method {
 	case http.MethodGet:
 		if r.URL.Path == "/jokes" || r.URL.Path == "/jokes/" {
-			middlewares.FetchAllQueryURL(j.fetchAll)(w, r)
+			j.getJokes(w, r)
 		} else {
-			j.vm.IDURLValidation(j.fetchOne, "joke_id")(w, r)
+			jkCtx := context.WithValue(r.Context(), middlewares.JokeParamKey{}, &data.Joke{})
+			j.getJoke(w, r.WithContext(jkCtx))
 		}
 
 	case http.MethodPost:
-		j.vm.JokeValidation(j.insert)(w, r)
+		jkCtx := context.WithValue(r.Context(), middlewares.JokeParamKey{}, &data.Joke{})
+		j.insertJoke(w, r.WithContext(jkCtx))
 
 	case http.MethodPut:
-		j.am.Auth(j.vm.IDURLValidation(j.vm.JokeValidation(j.update), "joke_id"), true)(w, r)
+		jkCtx := context.WithValue(r.Context(), middlewares.JokeParamKey{}, &data.Joke{})
+		j.updateJoke(w, r.WithContext(jkCtx))
 
 	case http.MethodDelete:
-		j.vm.IDURLValidation(j.delete, "joke_id")(w, r)
+		jkCtx := context.WithValue(r.Context(), middlewares.JokeParamKey{}, &data.Joke{})
+		j.deleteJoke(w, r.WithContext(jkCtx))
 	default:
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	}
 }
 
 func (j *Joke) delete(w http.ResponseWriter, r *http.Request) {
-	jokeID, ok := r.Context().Value(middlewares.IDParamKey{}).(string)
+	joke, ok := r.Context().Value(middlewares.JokeParamKey{}).(*data.Joke)
 
 	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	objectID, err := j.repo.Delete(r.Context(), jokeID)
+	objectID, err := j.repo.Delete(r.Context(), joke.ID)
 
 	if err != nil {
 		if err == repositories.ErrUnknownID {
@@ -100,6 +122,8 @@ func (j *Joke) fetchAll(w http.ResponseWriter, r *http.Request) {
 	var qar data.QueryAllResponse
 	qar.ResultCount = uint64(len(jokes))
 	qar.CursorNext = cursorNext
+	qar.Offset = params.Offset
+	qar.Limit = params.Limit
 	qar.Results = jokes
 
 	err = qar.ToJSON(w)
@@ -110,14 +134,14 @@ func (j *Joke) fetchAll(w http.ResponseWriter, r *http.Request) {
 }
 
 func (j *Joke) fetchOne(w http.ResponseWriter, r *http.Request) {
-	jokeID, ok := r.Context().Value(middlewares.IDParamKey{}).(string)
+	joke, ok := r.Context().Value(middlewares.JokeParamKey{}).(*data.Joke)
 
 	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	joke, err := j.repo.FetchOne(r.Context(), jokeID)
+	joke, err := j.repo.FetchOne(r.Context(), joke.ID)
 
 	if err != nil {
 		if err == repositories.ErrUnknownID {
@@ -140,14 +164,11 @@ func (j *Joke) fetchOne(w http.ResponseWriter, r *http.Request) {
 func (j *Joke) insert(w http.ResponseWriter, r *http.Request) {
 	joke, ok := r.Context().Value(middlewares.JokeParamKey{}).(*data.Joke)
 
-	joke.ID = ""
-
 	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-
-	objectID, err := j.repo.Insert(r.Context(), joke)
+	err := joke.GenerateID()
 
 	if err != nil {
 		j.l.Println(err.Error())
@@ -155,7 +176,13 @@ func (j *Joke) insert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	joke.ID = objectID
+	_, err = j.repo.Insert(r.Context(), joke)
+
+	if err != nil {
+		j.l.Println(err.Error())
+		http.Error(w, "Unexpected error", http.StatusInternalServerError)
+		return
+	}
 
 	err = joke.ToJSON(w)
 
@@ -166,14 +193,13 @@ func (j *Joke) insert(w http.ResponseWriter, r *http.Request) {
 
 func (j *Joke) update(w http.ResponseWriter, r *http.Request) {
 	joke, ok := r.Context().Value(middlewares.JokeParamKey{}).(*data.Joke)
-	jokeID, okID := r.Context().Value(middlewares.IDParamKey{}).(string)
 
-	if !ok || !okID {
+	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	objectID, err := j.repo.Update(r.Context(), jokeID, joke)
+	_, err := j.repo.Update(r.Context(), joke.ID, joke)
 
 	if err != nil {
 		if err == repositories.ErrUnknownID {
@@ -185,8 +211,6 @@ func (j *Joke) update(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Unexpected error", http.StatusInternalServerError)
 		return
 	}
-
-	joke.ID = objectID
 
 	err = joke.ToJSON(w)
 

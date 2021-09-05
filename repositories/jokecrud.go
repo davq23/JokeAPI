@@ -4,14 +4,14 @@ import (
 	"context"
 
 	"github.com/davq23/jokeapi/data"
-	"github.com/go-playground/validator/v10"
 )
 
 type JokeCRUD interface {
+	Delete(ctx context.Context, id string) (string, error)
 	FetchAll(ctx context.Context, limit uint64, offset string, direction FetchDirection) (data.Jokes, *string, error)
 	FetchOne(ctx context.Context, id string) (*data.Joke, error)
 	Insert(ctx context.Context, joke *data.Joke) (string, error)
 	Update(ctx context.Context, id string, joke *data.Joke) (string, error)
-	CheckValidID(fl validator.FieldLevel) bool
-	Delete(ctx context.Context, id string) (string, error)
+	RateJoke(ctx context.Context, jokeID string, jokeRating *data.JokeRating) (string, error)
+	DeleteRating(ctx context.Context, jokeID string, ratingID string, authID string) (string, error)
 }
