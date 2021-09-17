@@ -14,6 +14,7 @@ type Joke struct {
 	Explanation string      `json:"explanation,omitempty" db:"explanation,omitempty" bson:"explanation,omitempty"`
 	Language    string      `json:"lang" db:"language" bson:"language" validate:"required"`
 	Ratings     JokeRatings `json:"ratings,omitempty" bson:"ratings,omitempty"`
+	AvgRating   *float64    `json:"avg_rating" bson:"avgRating"`
 }
 
 func (j *Joke) GetID() (string, error) {

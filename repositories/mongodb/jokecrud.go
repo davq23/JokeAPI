@@ -29,12 +29,40 @@ func (jr *JokeCRUD) CheckValidID(fl validator.FieldLevel) bool {
 func (jr *JokeCRUD) FetchAll(ctx context.Context, limit uint64, offset string, direction repositories.FetchDirection) (data.Jokes, *string, error) {
 	var jokes data.Jokes
 
-	condition, options := paginate(offset, "id", limit+1, direction)
+	condition, _ := paginate(offset, "id", limit+1, direction)
 
-	cursor, err := jr.c.Find(ctx, condition, options)
+	cursor, err := jr.c.Aggregate(ctx,
+		bson.A{bson.M{"$match": condition},
+
+			bson.M{"$unwind": bson.M{"path": "$ratings", "preserveNullAndEmptyArrays": true}},
+			bson.M{
+				"$group": bson.M{
+					"_id":         "$id",
+					"id":          bson.M{"$first": "$id"},
+					"text":        bson.M{"$first": "$text"},
+					"explanation": bson.M{"$first": "$explanation"},
+					"language":    bson.M{"$first": "$language"},
+					"avgRating": bson.M{
+						"$avg": bson.M{"$cond": bson.A{
+							bson.M{
+								"$eq": bson.A{"$ratings", nil},
+							}, 0, "$ratings.rating",
+						}},
+					},
+				},
+			},
+			bson.M{
+				"$sort": bson.M{
+					"id": direction,
+				},
+			},
+			bson.M{
+				"$limit": limit + 1,
+			},
+		})
 
 	if err != nil {
-		return jokes, nil, repositories.ErrInvalidOffset
+		return jokes, nil, err
 	}
 
 	defer cursor.Close(ctx)
@@ -69,6 +97,11 @@ func (jr *JokeCRUD) FetchAll(ctx context.Context, limit uint64, offset string, d
 	}
 
 	return jokes, nextID, nil
+}
+
+func (jr *JokeCRUD) FetchRatings(ctx context.Context, jokeID string, limit uint64, offset string, direction repositories.FetchDirection) (data.JokeRatings, *string, error) {
+	//, _ := paginate(offset, "ratings.id", limit+1, direction)
+	return nil, nil, nil
 }
 
 func (jr *JokeCRUD) FetchOne(ctx context.Context, id string) (*data.Joke, error) {
