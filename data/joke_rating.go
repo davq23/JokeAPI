@@ -9,7 +9,7 @@ import (
 
 type JokeRating struct {
 	ID     string  `json:"rating_id" bson:"id,omitempty"`
-	UserID *string `json:"user_id" bson:"id,omitempty"`
+	UserID *string `json:"user_id" bson:"user_id,omitempty"`
 	Rating float64 `json:"rating" validate:"required,gt=0,lte=5" bson:"rating"`
 }
 
