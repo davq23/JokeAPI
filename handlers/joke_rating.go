@@ -15,12 +15,15 @@ type JokeRating struct {
 	repo             repositories.JokeCRUD
 	vm               *middlewares.Validation
 	am               *middlewares.Auth
+	getJokeRatings   http.HandlerFunc
 	rateJoke         http.HandlerFunc
 	deleteJokeRating http.HandlerFunc
 }
 
 func NewJokeRating(l *log.Logger, repo repositories.JokeCRUD, v *middlewares.Validation, auth *middlewares.Auth) *JokeRating {
 	jr := &JokeRating{l: l, repo: repo, vm: v, am: auth}
+
+	jr.getJokeRatings = middlewares.FetchAllQueryURL(jr.vm.OneIDURLValidation(jr.get, middlewares.JokeParamKey{}))
 
 	jr.rateJoke = jr.vm.OneIDURLValidation(
 		jr.vm.DataValidation(jr.rate, middlewares.JokeRatingParamKey{}),
@@ -42,6 +45,30 @@ func (jr *JokeRating) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		jkCtx := context.WithValue(r.Context(), middlewares.JokeRatingParamKey{}, &data.JokeRating{})
 		jkCtx = context.WithValue(jkCtx, middlewares.JokeParamKey{}, &data.Joke{})
 		jr.deleteJokeRating(w, r.WithContext(jkCtx))
+	}
+}
+
+func (jr *JokeRating) get(w http.ResponseWriter, r *http.Request) {
+	jrating, okRating := r.Context().Value(middlewares.JokeRatingParamKey{}).(*data.JokeRating)
+	j, okID := r.Context().Value(middlewares.JokeParamKey{}).(*data.Joke)
+
+	if !okRating || !okID {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	_, _, err := jr.repo.FetchRatings(r.Context(), j.ID, 120, "", repositories.FetchNext)
+
+	if err != nil {
+		jr.l.Println(err.Error(), j.ID)
+		http.Error(w, "Unexpected error", http.StatusInternalServerError)
+		return
+	}
+
+	err = jrating.ToJSON(w)
+
+	if err != nil {
+		http.Error(w, "Unexpected error", http.StatusInternalServerError)
 	}
 }
 

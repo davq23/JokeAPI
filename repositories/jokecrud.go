@@ -9,6 +9,7 @@ import (
 type JokeCRUD interface {
 	Delete(ctx context.Context, id string) (string, error)
 	FetchAll(ctx context.Context, limit uint64, offset string, direction FetchDirection) (data.Jokes, *string, error)
+	FetchRatings(ctx context.Context, jokeID string, limit uint64, offset string, direction FetchDirection) (data.JokeRatings, *string, error)
 	FetchOne(ctx context.Context, id string) (*data.Joke, error)
 	Insert(ctx context.Context, joke *data.Joke) (string, error)
 	Update(ctx context.Context, id string, joke *data.Joke) (string, error)
